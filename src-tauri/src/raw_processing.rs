@@ -221,7 +221,7 @@ impl CameraToSrgb {
             return None;
         }
         let primaries =
-            crate::white_balance::camera_to_srgb(&color_matrix, &camera_neutral(raw_image))?;
+            crate::white_balance::camera_to_display_p3(&color_matrix, &camera_neutral(raw_image))?;
 
         let mut matrix = [[0.0f32; 4]; 3];
         let mut limits = [0.0f32; 3];

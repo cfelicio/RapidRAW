@@ -1018,7 +1018,11 @@
       "resolution": "Resolution",
       "tiffBitDepth": "TIFF bit depth",
       "tiffBitDepth16": "16-bit",
-      "tiffBitDepth8": "8-bit"
+      "tiffBitDepth8": "8-bit",
+      "colorSpace": "Color Space",
+      "colorSpaceSrgb": "sRGB",
+      "colorSpaceDisplayP3": "Display P3",
+      "colorSpaceAdobeRgb": "Adobe RGB (1998)"
     },
     "labels": {
       "image": "Image",

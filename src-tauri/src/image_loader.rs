@@ -9,6 +9,7 @@ use crate::formats::is_raw_file;
 use crate::image_processing::ImageMetadata;
 use crate::image_processing::{
     apply_orientation, apply_srgb_to_linear, effective_baseline_exposure, linear_channel_to_srgb,
+    srgb_channel_to_linear,
 };
 use crate::mask_generation::{MaskDefinition, SubMask, generate_mask_bitmap};
 use crate::white_balance::WhiteBalance;
@@ -411,17 +412,46 @@ pub fn load_image_with_orientation(
     let mut rgb = oriented_image.to_rgb32f();
     let source_profile = match icc_profile {
         Some(icc) => ColorProfile::new_from_slice(&icc).ok(),
-        None => exif
-            .as_ref()
-            .is_some_and(is_exif_adobe_rgb)
-            .then(ColorProfile::new_adobe_rgb),
+        None => detect_png_cicp(bytes).or_else(|| {
+            exif.as_ref()
+                .is_some_and(is_exif_adobe_rgb)
+                .then(ColorProfile::new_adobe_rgb)
+        }),
     };
+    check_cancel()?;
     if let Some(profile) = source_profile {
-        check_cancel()?;
-        convert_profile_to_srgb(&mut rgb, &profile);
+        convert_profile_to_display_p3(&mut rgb, &profile);
+    } else {
+        convert_srgb_to_display_p3(&mut rgb);
     }
 
     Ok(DynamicImage::ImageRgb32F(rgb))
+}
+
+fn detect_png_cicp(bytes: &[u8]) -> Option<ColorProfile> {
+    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    let mut offset = 8;
+    while offset + 8 <= bytes.len() {
+        let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().ok()?) as usize;
+        let chunk_type = &bytes[offset + 4..offset + 8];
+        if chunk_type == b"cICP" && offset + 8 + length <= bytes.len() && length >= 2 {
+            let primaries = bytes[offset + 8];
+            if primaries == 12 || primaries == 11 {
+                return Some(ColorProfile::new_display_p3());
+            } else if primaries == 9 {
+                return Some(ColorProfile::new_bt2020());
+            } else if primaries == 1 {
+                return Some(ColorProfile::new_srgb());
+            }
+        }
+        if chunk_type == b"IEND" {
+            break;
+        }
+        offset += 8 + length + 4;
+    }
+    None
 }
 
 fn is_exif_adobe_rgb(exif: &exif::Exif) -> bool {
@@ -448,16 +478,30 @@ fn colorants(profile: &ColorProfile) -> DMat3 {
     DMat3::from_cols_array_2d(&profile.colorant_matrix().v).transpose()
 }
 
-fn convert_profile_to_srgb(image: &mut Rgb32FImage, source: &ColorProfile) {
+fn convert_profile_to_display_p3(image: &mut Rgb32FImage, source: &ColorProfile) {
     if source.color_space != DataColorSpace::Rgb || image.width() == 0 {
         return;
     }
-    let srgb = ColorProfile::new_srgb();
-    let (target, to_srgb) = if source.is_matrix_shaper() {
-        let matrix = (colorants(&srgb).inverse() * colorants(source)).as_mat3();
+    let p3 = ColorProfile::new_display_p3();
+
+    if source.is_matrix_shaper() {
+        let p3_mat = colorants(&p3);
+        let src_mat = colorants(source);
+        let diff = (p3_mat - src_mat).abs();
+        if diff.x_axis.max_element() < 0.002
+            && diff.y_axis.max_element() < 0.002
+            && diff.z_axis.max_element() < 0.002
+        {
+            // Already Display P3!
+            return;
+        }
+    }
+
+    let (target, to_p3) = if source.is_matrix_shaper() {
+        let matrix = (colorants(&p3).inverse() * colorants(source)).as_mat3();
         (with_linear_trc(source.clone()), matrix)
     } else {
-        (with_linear_trc(srgb), Mat3::IDENTITY)
+        (with_linear_trc(p3.clone()), Mat3::IDENTITY)
     };
 
     let options = TransformOptions {
@@ -466,47 +510,27 @@ fn convert_profile_to_srgb(image: &mut Rgb32FImage, source: &ColorProfile) {
     };
     let Ok(transform) = source.create_transform_f32(Layout::Rgb, &target, Layout::Rgb, options)
     else {
-        log::warn!("Unsupported embedded color profile, assuming sRGB");
+        log::warn!("Unsupported embedded color profile, converting sRGB to Display P3");
+        convert_srgb_to_display_p3(image);
         return;
     };
-    let to_linear_srgb = |src: &[f32], dst: &mut [f32]| {
+    let to_linear_p3 = |src: &[f32], dst: &mut [f32]| {
         transform.transform(src, dst)?;
         for rgb in dst.as_chunks_mut::<3>().0 {
-            *rgb = (to_srgb * Vec3::from_array(*rgb)).to_array();
+            *rgb = (to_p3 * Vec3::from_array(*rgb)).to_array();
         }
         Ok::<_, moxcms::CmsError>(())
     };
-
-    const STEPS: usize = 16;
-    let probe: Vec<f32> = (0..(STEPS + 1).pow(3))
-        .flat_map(|i| {
-            [
-                i % (STEPS + 1),
-                i / (STEPS + 1) % (STEPS + 1),
-                i / (STEPS + 1).pow(2),
-            ]
-            .map(|c| c as f32 / STEPS as f32)
-        })
-        .collect();
-    let mut probe_out = vec![0.0f32; probe.len()];
-    if to_linear_srgb(&probe, &mut probe_out).is_err() {
-        return;
-    }
-    let is_srgb = probe.iter().zip(&probe_out).all(|(input, linear)| {
-        (linear_channel_to_srgb(*linear).min(1.0) - input).abs() < 2.0 / 255.0
-    });
-    if is_srgb {
-        return;
-    }
 
     let row_len = image.width() as usize * 3;
     let mut linear = vec![0.0f32; image.as_raw().len()];
     let converted = linear
         .par_chunks_mut(row_len)
         .zip(image.as_raw().par_chunks(row_len))
-        .try_for_each(|(dst, src)| to_linear_srgb(src, dst));
+        .try_for_each(|(dst, src)| to_linear_p3(src, dst));
     if converted.is_err() {
-        log::warn!("Failed to apply embedded color profile, assuming sRGB");
+        log::warn!("Failed to apply embedded color profile, converting sRGB to Display P3");
+        convert_srgb_to_display_p3(image);
         return;
     }
 
@@ -531,6 +555,31 @@ fn convert_profile_to_srgb(image: &mut Rgb32FImage, source: &ColorProfile) {
                 *o = linear_channel_to_srgb((peak - (peak - c) * saturation) / scale);
             }
         });
+}
+
+fn convert_srgb_to_display_p3(image: &mut Rgb32FImage) {
+    if image.width() == 0 {
+        return;
+    }
+    // sRGB -> Display P3 in linear coordinates:
+    // [R_p3]   [0.8224621  0.1775380  0.0000000] [R_srgb]
+    // [G_p3] = [0.0331942  0.9668058  0.0000000] [G_srgb]
+    // [B_p3]   [0.0170827  0.0723974  0.9105199] [B_srgb]
+    let mat = Mat3::from_cols_array(&[
+        0.8224621, 0.0331942, 0.0170827,
+        0.1775380, 0.9668058, 0.0723974,
+        0.0000000, 0.0000000, 0.9105199,
+    ]);
+
+    image.as_mut().par_chunks_exact_mut(3).for_each(|pixel| {
+        let lin_r = srgb_channel_to_linear(pixel[0]);
+        let lin_g = srgb_channel_to_linear(pixel[1]);
+        let lin_b = srgb_channel_to_linear(pixel[2]);
+        let p3_lin = mat * Vec3::new(lin_r, lin_g, lin_b);
+        pixel[0] = linear_channel_to_srgb(p3_lin.x.clamp(0.0, 1.0));
+        pixel[1] = linear_channel_to_srgb(p3_lin.y.clamp(0.0, 1.0));
+        pixel[2] = linear_channel_to_srgb(p3_lin.z.clamp(0.0, 1.0));
+    });
 }
 
 fn composite_patches_cow<'a>(

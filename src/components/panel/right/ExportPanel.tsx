@@ -252,6 +252,15 @@ export default function ExportPanel({
     [t],
   );
 
+  const colorSpaceOptions = useMemo(
+    () => [
+      { label: t('export.file.colorSpaceSrgb'), value: 'srgb' },
+      { label: t('export.file.colorSpaceDisplayP3'), value: 'display_p3' },
+      { label: t('export.file.colorSpaceAdobeRgb'), value: 'adobe_rgb' },
+    ],
+    [t],
+  );
+
   const {
     fileFormat,
     setFileFormat,
@@ -323,6 +332,8 @@ export default function ExportPanel({
     setDestinationType,
     subfolder,
     setSubfolder,
+    colorSpace,
+    setColorSpace,
   } = useExportSettings();
 
   const adjustmentsRef = useRef(useEditorStore.getState().adjustments);
@@ -631,6 +642,7 @@ export default function ExportPanel({
             }
           : null,
       dpi,
+      colorSpace,
     };
 
     const lastExportPath = appSettings?.exportPresets?.find((p) => p.id === '__last_used__')?.lastExportPath;
@@ -797,6 +809,20 @@ export default function ExportPanel({
                     options={tiffBitDepthOptions}
                     value={String(tiffBitDepth)}
                     onChange={(value) => setTiffBitDepth(Number(value) as TiffBitDepth)}
+                    disabled={isExporting}
+                    className="w-full"
+                  />
+                </div>
+              )}
+              {fileFormat !== FileFormats.Cube && (
+                <div className={isExporting ? 'opacity-50 pointer-events-none' : ''}>
+                  <Text variant={TextVariants.label} className="mb-1">
+                    {t('export.file.colorSpace')}
+                  </Text>
+                  <Dropdown
+                    options={colorSpaceOptions}
+                    value={colorSpace || 'srgb'}
+                    onChange={(value) => setColorSpace(value as string)}
                     disabled={isExporting}
                     className="w-full"
                   />

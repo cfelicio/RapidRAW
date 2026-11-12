@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Emitter;
 use tauri::Manager;
+use moxcms::{ColorProfile, Layout, RenderingIntent, TransformOptions};
 
 use crate::AppState;
 use crate::app_settings::AppSettings;
@@ -149,6 +150,8 @@ pub struct ExportSettings {
     pub subfolder: Option<String>,
     #[serde(default)]
     pub dpi: Option<u16>,
+    #[serde(default)]
+    pub color_space: Option<String>,
     #[serde(default)]
     pub export_original: Option<OriginalExportOptions>,
 }
@@ -1384,12 +1387,103 @@ fn encode_grayscale_to_png(bitmap: &GrayImage) -> Result<Vec<u8>, String> {
 
 pub(crate) const SRGB_ICC_PROFILE: &[u8] = include_bytes!("../icc/sRGB-v2-magic.icc");
 
+fn get_export_profile_and_icc(color_space: Option<&str>) -> (ColorProfile, Vec<u8>) {
+    match color_space {
+        Some("display_p3") => {
+            let p3 = ColorProfile::new_display_p3();
+            let bytes = p3.encode().unwrap_or_else(|_| SRGB_ICC_PROFILE.to_vec());
+            (p3, bytes)
+        }
+        Some("adobe_rgb") => {
+            let adobe = ColorProfile::new_adobe_rgb();
+            let bytes = adobe.encode().unwrap_or_else(|_| SRGB_ICC_PROFILE.to_vec());
+            (adobe, bytes)
+        }
+        _ => (ColorProfile::new_srgb(), SRGB_ICC_PROFILE.to_vec()),
+    }
+}
+
+fn convert_export_image_colorspace(image: &DynamicImage, target_profile: &ColorProfile) -> DynamicImage {
+    let p3 = ColorProfile::new_display_p3();
+    let options = TransformOptions {
+        rendering_intent: RenderingIntent::RelativeColorimetric,
+        ..TransformOptions::default()
+    };
+    match image {
+        DynamicImage::ImageRgb8(rgb) => {
+            if let Ok(transform) = p3.create_transform_8bit(Layout::Rgb, target_profile, Layout::Rgb, options) {
+                let mut out = rgb.clone();
+                let _ = transform.transform(rgb.as_raw(), out.as_mut());
+                DynamicImage::ImageRgb8(out)
+            } else {
+                image.clone()
+            }
+        }
+        DynamicImage::ImageRgba8(rgba) => {
+            if let Ok(transform) = p3.create_transform_8bit(Layout::Rgba, target_profile, Layout::Rgba, options) {
+                let mut out = rgba.clone();
+                let _ = transform.transform(rgba.as_raw(), out.as_mut());
+                DynamicImage::ImageRgba8(out)
+            } else {
+                image.clone()
+            }
+        }
+        DynamicImage::ImageRgb16(rgb) => {
+            if let Ok(transform) = p3.create_transform_16bit(Layout::Rgb, target_profile, Layout::Rgb, options) {
+                let mut out = rgb.clone();
+                let _ = transform.transform(rgb.as_raw(), out.as_mut());
+                DynamicImage::ImageRgb16(out)
+            } else {
+                image.clone()
+            }
+        }
+        DynamicImage::ImageRgba16(rgba) => {
+            if let Ok(transform) = p3.create_transform_16bit(Layout::Rgba, target_profile, Layout::Rgba, options) {
+                let mut out = rgba.clone();
+                let _ = transform.transform(rgba.as_raw(), out.as_mut());
+                DynamicImage::ImageRgba16(out)
+            } else {
+                image.clone()
+            }
+        }
+        DynamicImage::ImageRgb32F(rgb) => {
+            if let Ok(transform) = p3.create_transform_f32(Layout::Rgb, target_profile, Layout::Rgb, options) {
+                let mut out = rgb.clone();
+                let _ = transform.transform(rgb.as_raw(), out.as_mut());
+                DynamicImage::ImageRgb32F(out)
+            } else {
+                image.clone()
+            }
+        }
+        _ => {
+            let rgb = image.to_rgb8();
+            if let Ok(transform) = p3.create_transform_8bit(Layout::Rgb, target_profile, Layout::Rgb, options) {
+                let mut out = rgb.clone();
+                let _ = transform.transform(rgb.as_raw(), out.as_mut());
+                DynamicImage::ImageRgb8(out)
+            } else {
+                image.clone()
+            }
+        }
+    }
+}
+
 fn encode_image_to_bytes(
     image: &DynamicImage,
     output_format: &str,
     export_settings: &ExportSettings,
     tiff_metadata: Option<&little_exif::metadata::Metadata>,
 ) -> Result<Vec<u8>, String> {
+    let (target_profile, icc_bytes) = get_export_profile_and_icc(export_settings.color_space.as_deref());
+    let is_p3 = export_settings.color_space.as_deref() == Some("display_p3");
+    let converted_image;
+    let image = if is_p3 {
+        image
+    } else {
+        converted_image = convert_export_image_colorspace(image, &target_profile);
+        &converted_image
+    };
+
     let jpeg_quality = export_settings.jpeg_quality;
     let mut image_bytes = Vec::new();
     let mut cursor = Cursor::new(&mut image_bytes);
@@ -1443,7 +1537,7 @@ fn encode_image_to_bytes(
                 .map_or_else(|| Cow::Owned(image.to_rgb8()), Cow::Borrowed);
             let mut encoder = JpegEncoder::new_with_quality(&mut cursor, jpeg_quality);
             encoder
-                .set_icc_profile(SRGB_ICC_PROFILE.to_vec())
+                .set_icc_profile(icc_bytes.clone())
                 .map_err(|e| e.to_string())?;
             if let Some(dpi) = export_settings.dpi {
                 encoder.set_pixel_density(PixelDensity::dpi(dpi));
@@ -1463,7 +1557,7 @@ fn encode_image_to_bytes(
 
             let mut encoder = PngEncoder::new(&mut cursor);
             encoder
-                .set_icc_profile(SRGB_ICC_PROFILE.to_vec())
+                .set_icc_profile(icc_bytes.clone())
                 .map_err(|e| e.to_string())?;
             image_to_encode
                 .write_with_encoder(encoder)
@@ -1481,7 +1575,7 @@ fn encode_image_to_bytes(
                 image,
                 samples,
                 tiff_metadata,
-                Some(SRGB_ICC_PROFILE),
+                Some(&icc_bytes),
                 export_settings.dpi,
             );
         }
@@ -2420,6 +2514,7 @@ pub async fn run_headless_export(
         destination_type: None,
         subfolder: None,
         dpi: None,
+        color_space: None,
         export_original: session.export_original,
     };
 

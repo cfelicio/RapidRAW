@@ -338,7 +338,20 @@ fn has_feature(f: u32) -> bool {
     return (FEATURES & f) != 0u;
 }
 
-const LUMA_COEFF = vec3<f32>(0.2126, 0.7152, 0.0722);
+const MAT_P3_TO_SRGB: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>( 1.2249402, -0.0420570, -0.0196376),
+    vec3<f32>(-0.2249402,  1.0420570, -0.0786361),
+    vec3<f32>( 0.0000000,  0.0000000,  1.0982736)
+);
+
+const MAT_SRGB_TO_P3: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>(0.8224621, 0.0331942, 0.0170827),
+    vec3<f32>(0.1775380, 0.9668058, 0.0723974),
+    vec3<f32>(0.0000000, 0.0000000, 0.9105199)
+);
+
+// Display P3 D65 Luminance weights
+const LUMA_COEFF = vec3<f32>(0.228985, 0.691774, 0.079241);
 
 fn get_luma(c: vec3<f32>) -> f32 {
     return dot(c, LUMA_COEFF);
@@ -1040,9 +1053,11 @@ fn apply_color_grading(color: vec3<f32>, shadows: ColorGradeSettings, midtones: 
         + highlights.luminance * luminance_regions.z
         + global.luminance;
 
-    let lab = linear_srgb_to_oklab(color);
+    let color_srgb = MAT_P3_TO_SRGB * color;
+    let lab = linear_srgb_to_oklab(color_srgb);
     let graded = oklab_to_linear_srgb(vec3<f32>(max(lab.x + luminance / slope, 0.0), lab.yz + tint / slope));
-    return fit_grade_gamut(graded, min(min(color.r, min(color.g, color.b)), 0.0));
+    let fitted = fit_grade_gamut(graded, min(min(color_srgb.r, min(color_srgb.g, color_srgb.b)), 0.0));
+    return MAT_SRGB_TO_P3 * fitted;
 }
 
 const MONOCHROME_MIX_EV: f32 = 2.0;

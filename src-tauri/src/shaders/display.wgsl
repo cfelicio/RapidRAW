@@ -78,9 +78,38 @@ fn sample_layer(layer: texture_2d<f32>, uv: vec2<f32>, image_size: vec2<f32>, te
     }
 }
 
+const MAT_P3_TO_SRGB: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>(1.2249402, -0.0420570, -0.0196376),
+    vec3<f32>(-0.2249402, 1.0420570, -0.0786361),
+    vec3<f32>(0.0000000, 0.0000000, 1.0982736)
+);
+
+fn p3_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let cutoff = vec3<f32>(0.04045);
+    let a = vec3<f32>(0.055);
+    let higher = pow((c + a) / (1.0 + a), vec3<f32>(2.4));
+    let lower = c / 12.92;
+    return select(higher, lower, c <= cutoff);
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let c_clamped = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    let cutoff = vec3<f32>(0.0031308);
+    let a = vec3<f32>(0.055);
+    let higher = (1.0 + a) * pow(c_clamped, vec3<f32>(1.0 / 2.4)) - a;
+    let lower = c_clamped * 12.92;
+    return select(higher, lower, c_clamped <= cutoff);
+}
+
+fn p3_to_srgb(p3_color: vec3<f32>) -> vec3<f32> {
+    let lin_p3 = p3_to_linear(clamp(p3_color, vec3<f32>(0.0), vec3<f32>(1.0)));
+    let lin_srgb = MAT_P3_TO_SRGB * lin_p3;
+    return linear_to_srgb(lin_srgb);
+}
+
 fn sample_display_lut(color: vec4<f32>) -> vec4<f32> {
     if (transform.has_display_lut < 0.5) {
-        return color;
+        return vec4<f32>(p3_to_srgb(color.rgb), color.a);
     }
     let lut_size = vec3<f32>(textureDimensions(display_lut));
     let scale = (lut_size - vec3<f32>(1.0)) / lut_size;

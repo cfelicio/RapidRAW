@@ -42,6 +42,7 @@ export function useExportSettings() {
   const [watermarkOpacity, setWatermarkOpacity] = useState(75);
   const [destinationType, setDestinationType] = useState<string>('customFolder');
   const [subfolder, setSubfolder] = useState<string>('');
+  const [colorSpace, setColorSpace] = useState<string>('srgb');
 
   const handleApplyPreset = useCallback((preset: ExportPreset) => {
     setFileFormat(preset.fileFormat);
@@ -78,6 +79,7 @@ export function useExportSettings() {
     setWatermarkOpacity(preset.watermarkOpacity);
     setDestinationType(preset.destinationType || 'customFolder');
     setSubfolder(preset.subfolder || '');
+    setColorSpace(preset.colorSpace || 'srgb');
   }, []);
 
   const currentSettingsObject = useMemo(
@@ -116,6 +118,7 @@ export function useExportSettings() {
       watermarkOpacity,
       destinationType,
       subfolder,
+      colorSpace,
     }),
     [
       fileFormat,
@@ -152,6 +155,7 @@ export function useExportSettings() {
       watermarkOpacity,
       destinationType,
       subfolder,
+      colorSpace,
     ],
   );
 
@@ -224,6 +228,8 @@ export function useExportSettings() {
     setDestinationType,
     subfolder,
     setSubfolder,
+    colorSpace,
+    setColorSpace,
     handleApplyPreset,
     currentSettingsObject,
   };

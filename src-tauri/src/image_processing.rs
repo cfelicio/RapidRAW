@@ -1147,7 +1147,7 @@ pub fn apply_cpu_default_raw_processing(image: &mut DynamicImage) {
     });
 }
 
-fn srgb_channel_to_linear(c: f32) -> f32 {
+pub(crate) fn srgb_channel_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -1910,6 +1910,11 @@ pub(crate) const PRIMARIES_SRGB: [Vec2; 3] = [
     Vec2::new(0.30, 0.60),
     Vec2::new(0.15, 0.06),
 ];
+pub(crate) const PRIMARIES_DISPLAY_P3: [Vec2; 3] = [
+    Vec2::new(0.680, 0.320),
+    Vec2::new(0.265, 0.690),
+    Vec2::new(0.150, 0.060),
+];
 const PRIMARIES_REC2020: [Vec2; 3] = [
     Vec2::new(0.708, 0.292),
     Vec2::new(0.170, 0.797),
@@ -1954,7 +1959,7 @@ fn mat3_to_gpu_mat3(m: Mat3) -> GpuMat3 {
 }
 
 fn calculate_agx_matrices_glam() -> (Mat3, Mat3) {
-    let pipe_work_profile_to_xyz = primaries_to_xyz_matrix(&PRIMARIES_SRGB, WP_D65);
+    let pipe_work_profile_to_xyz = primaries_to_xyz_matrix(&PRIMARIES_DISPLAY_P3, WP_D65);
     let base_profile_to_xyz = primaries_to_xyz_matrix(&PRIMARIES_REC2020, WP_D65);
     let xyz_to_base_profile = base_profile_to_xyz.inverse();
     let pipe_to_base = xyz_to_base_profile * pipe_work_profile_to_xyz;

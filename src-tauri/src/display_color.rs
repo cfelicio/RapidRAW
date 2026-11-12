@@ -188,15 +188,15 @@ pub fn generate_display_lut(
         _ => RenderingIntent::RelativeColorimetric,
     };
 
-    let srgb = ColorProfile::new_srgb();
+    let src_profile = ColorProfile::new_display_p3();
     let options = TransformOptions {
         rendering_intent,
         ..TransformOptions::default()
     };
 
-    let transform = srgb
+    let transform = src_profile
         .create_transform_f32(Layout::Rgb, &target, Layout::Rgb, options)
-        .map_err(|e| anyhow!("Failed to create sRGB -> Display transform: {e}"))?;
+        .map_err(|e| anyhow!("Failed to create Display P3 -> Display transform: {e}"))?;
 
     let size = precision.size();
     let n = size as usize;

@@ -1,4 +1,4 @@
-use crate::image_processing::{PRIMARIES_SRGB, WP_D65, primaries_to_xyz_matrix};
+use crate::image_processing::{PRIMARIES_DISPLAY_P3, PRIMARIES_SRGB, WP_D65, primaries_to_xyz_matrix};
 use glam::{DMat3, DVec3, Mat3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -235,6 +235,7 @@ fn neutral_xyz(camera_to_xyz: &[DVec3], neutral: &[f32]) -> Option<DVec3> {
     })
 }
 
+#[allow(dead_code)]
 pub fn camera_to_srgb(xyz_to_camera: &[f32], neutral: &[f32]) -> Option<Vec<[f32; 3]>> {
     let columns = camera_to_xyz(xyz_to_camera)?;
     let white_lms = BRADFORD * neutral_xyz(&columns, neutral)?;
@@ -248,6 +249,27 @@ pub fn camera_to_srgb(xyz_to_camera: &[f32], neutral: &[f32]) -> Option<Vec<[f32
         .inverse();
     let transform =
         xyz_to_srgb * BRADFORD.inverse() * DMat3::from_diagonal(d65_lms / white_lms) * BRADFORD;
+    Some(
+        columns
+            .iter()
+            .map(|column| (transform * *column).as_vec3().to_array())
+            .collect(),
+    )
+}
+
+pub fn camera_to_display_p3(xyz_to_camera: &[f32], neutral: &[f32]) -> Option<Vec<[f32; 3]>> {
+    let columns = camera_to_xyz(xyz_to_camera)?;
+    let white_lms = BRADFORD * neutral_xyz(&columns, neutral)?;
+    if !white_lms.is_finite() || white_lms.min_element() <= 0.0 {
+        return None;
+    }
+    let (x, y) = (WP_D65.x as f64, WP_D65.y as f64);
+    let d65_lms = BRADFORD * DVec3::new(x / y, 1.0, (1.0 - x - y) / y);
+    let xyz_to_p3 = primaries_to_xyz_matrix(&PRIMARIES_DISPLAY_P3, WP_D65)
+        .as_dmat3()
+        .inverse();
+    let transform =
+        xyz_to_p3 * BRADFORD.inverse() * DMat3::from_diagonal(d65_lms / white_lms) * BRADFORD;
     Some(
         columns
             .iter()
