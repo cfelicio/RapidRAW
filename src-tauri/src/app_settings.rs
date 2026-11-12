@@ -741,6 +741,22 @@ pub struct AppSettings {
     pub workspace: WorkspaceState,
     #[serde(default)]
     pub immich: crate::immich::ImmichSettings,
+    #[serde(default)]
+    pub enable_display_color_management: Option<bool>,
+    #[serde(default)]
+    pub display_icc_profile_path: Option<String>,
+    #[serde(default = "default_display_rendering_intent")]
+    pub display_rendering_intent: Option<String>,
+    #[serde(default = "default_display_lut_precision")]
+    pub display_lut_precision: Option<String>,
+}
+
+pub fn default_display_rendering_intent() -> Option<String> {
+    Some("relative_bpc".to_string())
+}
+
+pub fn default_display_lut_precision() -> Option<String> {
+    Some("standard".to_string())
 }
 
 const UI_SCALE_MIN: f64 = 0.5;
@@ -918,6 +934,10 @@ impl Default for AppSettings {
             adjustment_layout: AdjustmentLayout::default(),
             workspace: WorkspaceState::default(),
             immich: crate::immich::ImmichSettings::default(),
+            enable_display_color_management: Some(false),
+            display_icc_profile_path: None,
+            display_rendering_intent: default_display_rendering_intent(),
+            display_lut_precision: default_display_lut_precision(),
         }
     }
 }
@@ -1079,5 +1099,6 @@ pub fn save_settings(mut settings: AppSettings, app_handle: AppHandle) -> Result
     if previous_gpu_acceleration != Some(settings.ai_gpu_acceleration) {
         crate::ai_processing::reset_ai_sessions(&state.ai_state);
     }
+    crate::display_color::sync_display_color_management(&app_handle);
     Ok(())
 }

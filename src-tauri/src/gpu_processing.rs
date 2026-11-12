@@ -51,7 +51,7 @@ pub struct DisplayTransform {
     pub image_size: [f32; 2],
     pub texture_size: [f32; 2],
     pub pixelated: f32,
-    pub _pad: f32,
+    pub has_display_lut: f32,
     pub bg_primary: [f32; 4],
     pub bg_secondary: [f32; 4],
     pub original_size: [f32; 2],
@@ -75,7 +75,7 @@ impl Default for DisplayTransform {
             image_size: [100.0, 100.0],
             texture_size: [100.0, 100.0],
             pixelated: 0.0,
-            _pad: 0.0,
+            has_display_lut: 0.0,
             bg_primary: [24.0 / 255.0, 24.0 / 255.0, 24.0 / 255.0, 1.0],
             bg_secondary: [35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0, 1.0],
             original_size: [100.0, 100.0],
@@ -143,6 +143,11 @@ pub struct WgpuDisplay {
     pub content_key: Option<u64>,
     pub rect_key: Option<u64>,
     pub pending_rect: Option<(u64, [f32; 4])>,
+    pub display_lut_texture: Option<wgpu::Texture>,
+    pub display_lut_view: Option<wgpu::TextureView>,
+    pub identity_lut_texture: wgpu::Texture,
+    pub identity_lut_view: wgpu::TextureView,
+    pub display_lut_sampler: wgpu::Sampler,
     #[cfg(target_os = "linux")]
     pub wayland: Option<crate::wayland_subsurface::WaylandSubsurface>,
 }
@@ -206,9 +211,60 @@ impl WgpuDisplay {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(original_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.display_lut_view
+                            .as_ref()
+                            .unwrap_or(&self.identity_lut_view),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&self.display_lut_sampler),
+                },
             ],
             label: None,
         }));
+    }
+
+    pub fn update_display_lut(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        lut_data: Option<&crate::display_color::DisplayLutData>,
+    ) {
+        if let Some(lut) = lut_data {
+            let texture = device.create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("Display 3D LUT Texture"),
+                    size: wgpu::Extent3d {
+                        width: lut.size,
+                        height: lut.size,
+                        depth_or_array_layers: lut.size,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D3,
+                    format: lut.format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                TextureDataOrder::MipMajor,
+                &lut.bytes,
+            );
+            let view = texture.create_view(&Default::default());
+            self.display_lut_texture = Some(texture);
+            self.display_lut_view = Some(view);
+            self.latest_transform.has_display_lut = 1.0;
+        } else {
+            self.display_lut_texture = None;
+            self.display_lut_view = None;
+            self.latest_transform.has_display_lut = 0.0;
+        }
+        self.rebind(device);
+        self.flush(device, queue);
     }
 
     pub fn show_texture(
@@ -465,6 +521,7 @@ pub fn build_wgpu_display(
     surface: wgpu::Surface<'static>,
     adapter: &wgpu::Adapter,
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     size: tauri::PhysicalSize<u32>,
     standalone: bool,
     #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] platform: PlatformSurface,
@@ -583,6 +640,22 @@ pub fn build_wgpu_display(
                     multisampled: false,
                 },
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                count: None,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                count: None,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            },
         ],
     });
 
@@ -637,6 +710,37 @@ pub fn build_wgpu_display(
         ..Default::default()
     });
 
+    let identity_lut_texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("Display Identity 3D LUT Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        TextureDataOrder::MipMajor,
+        &[0u8, 0, 0, 255],
+    );
+    let identity_lut_view = identity_lut_texture.create_view(&Default::default());
+
+    let display_lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Display LUT Sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
     Ok(WgpuDisplay {
         surface,
         config,
@@ -654,6 +758,11 @@ pub fn build_wgpu_display(
         content_key: None,
         rect_key: None,
         pending_rect: None,
+        display_lut_texture: None,
+        display_lut_view: None,
+        identity_lut_texture,
+        identity_lut_view,
+        display_lut_sampler,
         #[cfg(target_os = "linux")]
         wayland: platform,
     })
@@ -941,7 +1050,7 @@ pub fn get_or_init_gpu_context(
             .inner_size()
             .unwrap_or(tauri::PhysicalSize::new(1280, 720));
         Some(build_wgpu_display(
-            surface, &adapter, &device, size, false, platform,
+            surface, &adapter, &device, &queue, size, false, platform,
         )?)
     } else {
         None

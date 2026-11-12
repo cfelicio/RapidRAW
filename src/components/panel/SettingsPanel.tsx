@@ -57,6 +57,7 @@ import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { useCloudUsage } from '../../hooks/useCloudUsage';
 import { open } from '@tauri-apps/plugin-shell';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import ImmichSettings from '../immich/ImmichSettings';
 import DataManagementSettings from './settings/DataManagementSettings';
 import EditInAppsSettings from './settings/EditInAppsSettings';
@@ -646,7 +647,17 @@ export default function SettingsPanel({
     rawPreprocessingSharpening: appSettings?.rawPreprocessingSharpening ?? 0.35,
     applyPreprocessingToNonRaws: appSettings?.applyPreprocessingToNonRaws ?? false,
     useAppleRaw9: appSettings?.useAppleRaw9 ?? false,
+    enableDisplayColorManagement: appSettings?.enableDisplayColorManagement ?? false,
+    displayIccProfilePath: appSettings?.displayIccProfilePath ?? '',
+    displayRenderingIntent: appSettings?.displayRenderingIntent ?? 'relative_bpc',
+    displayLutPrecision: appSettings?.displayLutPrecision ?? 'standard',
   });
+  const [profileInfo, setProfileInfo] = useState<{
+    name: string;
+    colorSpace: string;
+    isValid: boolean;
+    error?: string | null;
+  } | null>(null);
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
   const [dpr, setDpr] = useState(() => getDevicePixelRatio());
@@ -672,6 +683,23 @@ export default function SettingsPanel({
     () => [
       { value: 'high', label: t('settings.processing.qualities.high') },
       { value: 'performance', label: t('settings.processing.qualities.performance') },
+    ],
+    [t],
+  );
+
+  const displayLutPrecisionOptions = useMemo<OptionItem<string>[]>(
+    () => [
+      { value: 'standard', label: t('settings.processing.displayColor.precisionStandard') },
+      { value: 'high', label: t('settings.processing.displayColor.precisionHigh') },
+    ],
+    [t],
+  );
+
+  const displayRenderingIntentOptions = useMemo<OptionItem<string>[]>(
+    () => [
+      { value: 'relative_bpc', label: t('settings.processing.displayColor.intentRelativeBpc') },
+      { value: 'perceptual', label: t('settings.processing.displayColor.intentPerceptual') },
+      { value: 'absolute', label: t('settings.processing.displayColor.intentAbsolute') },
     ],
     [t],
   );
@@ -774,9 +802,35 @@ export default function SettingsPanel({
       rawPreprocessingSharpening: appSettings?.rawPreprocessingSharpening ?? 0.35,
       applyPreprocessingToNonRaws: appSettings?.applyPreprocessingToNonRaws ?? false,
       useAppleRaw9: appSettings?.useAppleRaw9 ?? false,
+      enableDisplayColorManagement: appSettings?.enableDisplayColorManagement ?? false,
+      displayIccProfilePath: appSettings?.displayIccProfilePath ?? '',
+      displayRenderingIntent: appSettings?.displayRenderingIntent ?? 'relative_bpc',
+      displayLutPrecision: appSettings?.displayLutPrecision ?? 'standard',
     });
     setRestartRequired(false);
   }, [appSettings]);
+
+  useEffect(() => {
+    if (processingSettings.displayIccProfilePath) {
+      invoke<{
+        name: string;
+        colorSpace: string;
+        isValid: boolean;
+        error?: string | null;
+      }>('get_icc_profile_info', { path: processingSettings.displayIccProfilePath })
+        .then((info) => setProfileInfo(info))
+        .catch((err) =>
+          setProfileInfo({
+            name: processingSettings.displayIccProfilePath.split(/[/\\]/).pop() || 'Display Profile',
+            colorSpace: 'Unknown',
+            isValid: false,
+            error: String(err),
+          })
+        );
+    } else {
+      setProfileInfo(null);
+    }
+  }, [processingSettings.displayIccProfilePath]);
 
   useEffect(() => {
     invoke<string[]>('get_lensfun_makers').then(setLensMakers).catch(console.error);
@@ -2114,6 +2168,128 @@ export default function SettingsPanel({
                           />
                         </SettingItem>
                       )}
+
+                      <div className="space-y-4 pt-2">
+                        <SettingItem
+                          label={t('settings.processing.displayColor.enable')}
+                          description={t('settings.processing.displayColor.enableDesc')}
+                        >
+                          <Switch
+                            checked={processingSettings.enableDisplayColorManagement}
+                            id="display-color-management-toggle"
+                            label={t('settings.processing.displayColor.enable')}
+                            onChange={(checked) => handleProcessingSettingChange('enableDisplayColorManagement', checked)}
+                          />
+                        </SettingItem>
+
+                        <AnimatePresence>
+                          {processingSettings.enableDisplayColorManagement && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.2 }}
+                              className="space-y-4 overflow-hidden"
+                            >
+                              <div className="pl-4 border-l-2 border-border-color ml-1 space-y-4">
+                                <SettingItem
+                                  label={t('settings.processing.displayColor.profile')}
+                                  description={t('settings.processing.displayColor.profileDesc')}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="secondary"
+                                      size="small"
+                                      onClick={async () => {
+                                        const selected = await openDialog({
+                                          multiple: false,
+                                          filters: [
+                                            {
+                                              name: t('settings.processing.displayColor.filterLabel'),
+                                              extensions: ['icc', 'icm', 'ICC', 'ICM'],
+                                            },
+                                          ],
+                                        });
+                                        if (selected && typeof selected === 'string') {
+                                          handleProcessingSettingChange('displayIccProfilePath', selected);
+                                        }
+                                      }}
+                                    >
+                                      {t('settings.processing.displayColor.browse')}
+                                    </Button>
+                                    {processingSettings.displayIccProfilePath && (
+                                      <Button
+                                        variant="ghost"
+                                        size="small"
+                                        onClick={() => handleProcessingSettingChange('displayIccProfilePath', '')}
+                                      >
+                                        <X size={14} />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </SettingItem>
+
+                                {processingSettings.displayIccProfilePath && profileInfo && (
+                                  <div className="p-3 bg-bg-primary rounded-xl border border-border-color text-xs space-y-1">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-semibold text-text-primary">{profileInfo.name}</span>
+                                      <span
+                                        className={clsx(
+                                          'px-2 py-0.5 rounded text-[10px] font-mono',
+                                          profileInfo.isValid
+                                            ? 'bg-accent-color/20 text-accent-color'
+                                            : 'bg-red-500/20 text-red-400',
+                                        )}
+                                      >
+                                        {profileInfo.colorSpace}
+                                      </span>
+                                    </div>
+                                    <div className="text-text-secondary truncate text-[11px]">
+                                      {processingSettings.displayIccProfilePath}
+                                    </div>
+                                    {profileInfo.error && (
+                                      <div className="text-red-400 text-[11px] mt-1">{profileInfo.error}</div>
+                                    )}
+                                  </div>
+                                )}
+
+                                <SettingItem
+                                  label={t('settings.processing.displayColor.precision')}
+                                  description={t('settings.processing.displayColor.precisionDesc')}
+                                >
+                                  <Dropdown
+                                    onChange={(value: any) =>
+                                      handleProcessingSettingChange('displayLutPrecision', value)
+                                    }
+                                    options={displayLutPrecisionOptions}
+                                    value={processingSettings.displayLutPrecision || 'standard'}
+                                    triggerClassName="bg-bg-primary"
+                                  />
+                                </SettingItem>
+
+                                <SettingItem
+                                  label={t('settings.processing.displayColor.intent')}
+                                  description={t('settings.processing.displayColor.intentDesc')}
+                                >
+                                  <Dropdown
+                                    onChange={(value: any) =>
+                                      handleProcessingSettingChange('displayRenderingIntent', value)
+                                    }
+                                    options={displayRenderingIntentOptions}
+                                    value={processingSettings.displayRenderingIntent || 'relative_bpc'}
+                                    triggerClassName="bg-bg-primary"
+                                  />
+                                </SettingItem>
+
+                                <div className="p-3 bg-bg-primary/60 rounded-xl border border-border-color text-xs text-text-secondary flex gap-2.5 items-start">
+                                  <Info size={16} className="text-accent-color shrink-0 mt-0.5" />
+                                  <span>{t('settings.processing.displayColor.warning')}</span>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
 
                       <SettingItem
                         label={t('settings.processing.advanced.heading')}

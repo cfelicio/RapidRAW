@@ -5,7 +5,7 @@ struct Transform {
     image_size: vec2<f32>,
     texture_size: vec2<f32>,
     pixelated: f32,
-    _pad: f32,
+    has_display_lut: f32,
     bg_primary: vec4<f32>,
     bg_secondary: vec4<f32>,
     original_size: vec2<f32>,
@@ -18,6 +18,8 @@ struct Transform {
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 @group(0) @binding(3) var original_tex: texture_2d<f32>;
+@group(0) @binding(4) var display_lut: texture_3d<f32>;
+@group(0) @binding(5) var display_lut_samp: sampler;
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -76,6 +78,18 @@ fn sample_layer(layer: texture_2d<f32>, uv: vec2<f32>, image_size: vec2<f32>, te
     }
 }
 
+fn sample_display_lut(color: vec4<f32>) -> vec4<f32> {
+    if (transform.has_display_lut < 0.5) {
+        return color;
+    }
+    let lut_size = vec3<f32>(textureDimensions(display_lut));
+    let scale = (lut_size - vec3<f32>(1.0)) / lut_size;
+    let offset = vec3<f32>(0.5) / lut_size;
+    let uv = clamp(color.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * scale + offset;
+    let mapped = textureSampleLevel(display_lut, display_lut_samp, uv, 0.0).rgb;
+    return vec4<f32>(mapped, color.a);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let is_original = dot(in.pos.xy - transform.split_origin, transform.split_normal) < 0.0;
@@ -85,8 +99,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return transform.bg_secondary;
     }
 
+    var base_color: vec4<f32>;
     if (is_original) {
-        return sample_layer(original_tex, uv, transform.original_size, transform.original_size);
+        base_color = sample_layer(original_tex, uv, transform.original_size, transform.original_size);
+    } else {
+        base_color = sample_layer(tex, uv, transform.image_size, transform.texture_size);
     }
-    return sample_layer(tex, uv, transform.image_size, transform.texture_size);
+    return sample_display_lut(base_color);
 }

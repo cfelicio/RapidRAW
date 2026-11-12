@@ -409,10 +409,16 @@ fn attach_viewer_display(
         surface,
         &ctx.adapter,
         &ctx.device,
+        &ctx.queue,
         size,
         true,
         platform,
     )?;
+    if let Ok(settings) = crate::app_settings::load_settings(app_handle.clone())
+        && let Some(lut) = crate::display_color::load_active_display_lut(&settings)
+    {
+        display.update_display_lut(&ctx.device, &ctx.queue, Some(&lut));
+    }
     display.set_background(viewer_state(&state).background);
     display.flush(&ctx.device, &ctx.queue);
     *ctx.viewer_display.lock().unwrap_or_else(|e| e.into_inner()) = Some(display);

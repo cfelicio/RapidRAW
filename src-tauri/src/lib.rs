@@ -41,6 +41,7 @@ mod clone_heal;
 mod culling;
 mod demosaic;
 mod develop;
+mod display_color;
 mod edit_in;
 mod effect_maps;
 mod exif_processing;
@@ -415,6 +416,11 @@ fn get_image_dimensions(path: String) -> Result<ImageDimensions, String> {
     image::image_dimensions(&source_path)
         .map(|(width, height)| ImageDimensions { width, height })
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_icc_profile_info(path: String) -> display_color::IccProfileInfo {
+    display_color::inspect_icc_file(&path)
 }
 
 #[tauri::command]
@@ -2634,6 +2640,8 @@ pub fn run() {
                         "GPU pre-initialization failed (editing and thumbnails may be degraded): {}",
                         error
                     );
+                } else {
+                    display_color::sync_display_color_management(app.handle());
                 }
 
                 let scale = window.scale_factor().unwrap_or(1.0);
@@ -2856,6 +2864,7 @@ pub fn run() {
             generate_all_community_previews,
             save_temp_file,
             get_image_dimensions,
+            get_icc_profile_info,
             frontend_ready,
             cancel_thumbnail_generation,
             update_wgpu_transform,

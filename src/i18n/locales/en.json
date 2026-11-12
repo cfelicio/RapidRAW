@@ -2040,6 +2040,26 @@
       "title": "My Lenses"
     },
     "processing": {
+      "displayColor": {
+        "title": "Display Color Management",
+        "desc": "Calibrate canvas output for wide-gamut and OLED monitors using an ICC monitor profile.",
+        "enable": "Enable Display Color Management",
+        "enableDesc": "Applies a display transform LUT to map preview colors accurately to your screen's color space.",
+        "profile": "Monitor ICC Profile",
+        "profileDesc": "Path to your monitor's calibrated .icc or .icm profile file.",
+        "browse": "Browse Profile...",
+        "filterLabel": "ICC Monitor Profiles",
+        "precision": "LUT Quality & Precision",
+        "precisionDesc": "Resolution and bit-depth of the generated GPU 3D color lookup table.",
+        "precisionStandard": "Standard (33³ grid, 8-bit, Fast)",
+        "precisionHigh": "High Precision (65³ grid, 16-bit Float, Ultra-smooth)",
+        "intent": "Rendering Intent",
+        "intentDesc": "How out-of-gamut colors are mapped to your display's color space.",
+        "intentRelativeBpc": "Relative Colorimetric with BPC (Recommended)",
+        "intentPerceptual": "Perceptual",
+        "intentAbsolute": "Absolute Colorimetric",
+        "warning": "Only enable this feature if your operating system or desktop environment does not already perform display color management (e.g. Linux X11, Windows 10, or Windows 11 without Auto Color Management). If your OS already manages colors (e.g. macOS or Windows 11 with ACM enabled), enabling this may cause double-correction and undersaturated colors."
+      },
       "advanced": {
         "heading": "Advanced",
         "headingDesc": "Performance tuning for thumbnails, caching and exports. The defaults work well for most users.",

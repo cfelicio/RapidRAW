@@ -218,6 +218,22 @@ jobs:
           compression-level: 6
           if-no-files-found: warn
 
+      - name: Package Windows Portable
+        if: ${{ startsWith(inputs.platform, 'windows') && inputs.release-id == '' && inputs.mobile == '' }}
+        shell: pwsh
+        run: |
+          $target = "${{ inputs.target }}"
+          $releaseDir = if ($target -ne "") { "src-tauri/target/$target/release" } else { "src-tauri/target/release" }
+          $portableDir = "portable-build"
+          New-Item -ItemType Directory -Force -Path $portableDir
+          if (Test-Path "$releaseDir/RapidRAW.exe") {
+            Copy-Item "$releaseDir/RapidRAW.exe" -Destination "$portableDir/RapidRAW.exe"
+          }
+          if (Test-Path "$releaseDir/resources") {
+            Copy-Item -Recurse "$releaseDir/resources" -Destination "$portableDir/resources"
+          }
+          Compress-Archive -Path "$portableDir/*" -DestinationPath "RapidRAW-portable-windows-x64.zip" -Force
+
       - name: Upload Windows Artifacts
         if: ${{ startsWith(inputs.platform, 'windows') && inputs.release-id == '' && inputs.mobile == '' }}
         uses: actions/upload-artifact@v6
@@ -226,6 +242,7 @@ jobs:
           path: |
             src-tauri/target/${{ inputs.target || 'release' }}/bundle/**/*.exe
             src-tauri/target/${{ inputs.target || 'release' }}/release/bundle/**/*.exe
+            RapidRAW-portable-windows-x64.zip
           retention-days: 7
           compression-level: 6
           if-no-files-found: warn
