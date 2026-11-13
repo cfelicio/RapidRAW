@@ -74,10 +74,12 @@ fn compute_thumbnail_cache_hash(
 ) -> Option<String> {
     let (source_path, _) = parse_virtual_path(path_str);
     let is_raw = is_raw_file(&source_path);
+    let is_heif = crate::formats::is_heif_or_avif_file(&source_path);
     let render_key = format!(
-        "{:?}{:?}",
+        "{:?}{:?}{}",
         resolve_render_options(settings, is_raw),
-        settings.always_decode_raw_thumbnails
+        settings.always_decode_raw_thumbnails,
+        if is_heif { "_heif_v3" } else { "" }
     );
 
     let img_mod_time = fs::metadata(&source_path)

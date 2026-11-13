@@ -232,6 +232,11 @@ jobs:
           if (Test-Path "$releaseDir/resources") {
             Copy-Item -Recurse "$releaseDir/resources" -Destination "$portableDir/resources"
           }
+          if (Test-Path "$releaseDir/lensfun_db") {
+            Copy-Item -Recurse "$releaseDir/lensfun_db" -Destination "$portableDir/lensfun_db"
+          } elseif (Test-Path "src-tauri/lensfun_db") {
+            Copy-Item -Recurse "src-tauri/lensfun_db" -Destination "$portableDir/lensfun_db"
+          }
           Compress-Archive -Path "$portableDir/*" -DestinationPath "RapidRAW-portable-windows-x64.zip" -Force
 
       - name: Upload Windows Artifacts
