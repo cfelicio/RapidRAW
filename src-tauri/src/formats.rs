@@ -72,6 +72,7 @@ pub const RAW_EXTENSIONS: &[(&str, &str)] = &[
 
 pub const NON_RAW_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "jxl", // Standard formats
+    "heic", "heif", "hif", "avif", // High-efficiency & modern formats
     "exr", "hdr", // High Dynamic Range / Wide Gamut
     "tga", "ico", "dds", // Graphics & Icons
     "qoi", "ff", // Simple/Specialist formats

@@ -382,6 +382,67 @@ pub fn load_image_with_orientation(
         Ok(())
     };
 
+    if crate::heif_parser::is_isobmff_heif_or_avif(bytes) {
+        check_cancel()?;
+        if let Ok(image) = crate::heif_avif::decode_heif_or_avif(bytes) {
+            check_cancel()?;
+            let heif_meta = crate::heif_parser::parse_heif_metadata(bytes);
+
+            let exif_obj = heif_meta.exif.as_ref().and_then(|exif_bytes| {
+                ExifReader::new()
+                    .read_from_container(&mut Cursor::new(exif_bytes))
+                    .or_else(|_| ExifReader::new().read_raw(exif_bytes.clone()))
+                    .ok()
+            });
+
+            let orientation = exif_obj
+                .as_ref()
+                .and_then(|exif| {
+                    exif.get_field(Tag::Orientation, exif::In::PRIMARY)?
+                        .value
+                        .get_uint(0)
+                })
+                .or_else(|| {
+                    heif_meta.orientation_degrees.map(|deg| match deg {
+                        90 => 6,
+                        180 => 3,
+                        270 => 8,
+                        _ => 1,
+                    })
+                });
+
+            let oriented_image = match orientation {
+                Some(orientation) => {
+                    apply_orientation(image, Orientation::from_u16(orientation as u16))
+                }
+                None => image,
+            };
+
+            let mut rgb = oriented_image.to_rgb32f();
+
+            let source_profile = heif_meta
+                .icc_profile
+                .as_deref()
+                .and_then(|icc| ColorProfile::new_from_slice(icc).ok())
+                .or_else(|| heif_meta.cicp.and_then(|c| c.to_moxcms_profile()))
+                .or_else(|| {
+                    exif_obj
+                        .as_ref()
+                        .is_some_and(is_exif_adobe_rgb)
+                        .then(ColorProfile::new_adobe_rgb)
+                });
+
+            check_cancel()?;
+            if let Some(profile) = source_profile {
+                convert_profile_to_display_p3(&mut rgb, &profile);
+            } else {
+                convert_srgb_to_display_p3(&mut rgb);
+            }
+
+            return Ok(DynamicImage::ImageRgb32F(rgb));
+        }
+    }
+
     let cursor = Cursor::new(bytes);
     let mut reader = ImageReader::new(cursor.clone())
         .with_guessed_format()

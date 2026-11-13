@@ -55,6 +55,10 @@ mod gpu_compute;
 mod gpu_processing;
 mod guided_perspective;
 mod hdr_deghosting;
+mod heif_avif;
+mod heif_parser;
+#[cfg(target_os = "windows")]
+mod heif_wic;
 mod image_loader;
 mod image_preload;
 mod image_processing;
